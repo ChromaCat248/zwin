@@ -31,12 +31,13 @@ int checkOtherWM(Display* display, XErrorEvent* errorEvent) {
 void frame(Window window, bool was_created_before_wm) {
 	
 	// visual properties of frame
-	const unsigned int borderWidth = 1;
+	const unsigned int borderWidth = 3;
 	const unsigned long borderColor = 0x888888;
-	const unsigned long backgroundColor = 0xaaaaaa;
+	const unsigned long backgroundColor = 0x444444;
 	
 	// retrieve attributes of window to frame
 	XWindowAttributes attrs;
+	XGetWindowAttributes(display, window, &attrs);
 	
 	// only frame pre-existing windows if they are visible and don't set override_redirect
 	if (was_created_before_wm &&
@@ -82,26 +83,30 @@ void frame(Window window, bool was_created_before_wm) {
 	// Save frame
 	clients[window] = frame;
 	
-	printf("Framed a window\n");
+	printf("ZWin: Framed a window\n");
 };
 
 void unframe(Window window) {
+	if (!clients.count(window)) {
+		return;
+	};	
+	
 	const Window frame = clients[window];
 	
 	XUnmapWindow(display, frame);
 	
-	XReparentWindow(
+	/*XReparentWindow(
 		display,
 		window,
 		root,
 		0, 0
-	);
+	);*/
 	
 	XRemoveFromSaveSet(display, frame);
 	
 	clients.erase(window);
 	
-	printf("Unframed a window\n");
+	printf("ZWin: Unframed a window\n");
 };
 
 
@@ -129,8 +134,8 @@ void onReparentNotify(const XReparentEvent& event) {
 
 void onMapRequest(const XMapRequestEvent& event) {
 	frame(event.window, false);
-	XMapWindow(display, clients[event.window]);
-	printf("Mapped a window\n");
+	XMapWindow(display, event.window);
+	printf("ZWin: Mapped a window\n");
 };
 
 void onMapNotify(const XMapEvent& event) {
@@ -138,13 +143,31 @@ void onMapNotify(const XMapEvent& event) {
 };
 
 void onUnmapNotify(const XUnmapEvent& event) {
-	// ignore
+	if (!clients.count(event.window)) {
+		return;
+	}
+	if (event.event == root) {
+		return;
+	}
+	unframe(event.window);
 };
 
 void onDestroyNotify(const XDestroyWindowEvent& event) {
 	// ignore
 }
 
+
+int onXError(Display* display, XErrorEvent* e) {
+	const int MAX_ERROR_TEXT_LENGTH = 1024;
+	char error_text[MAX_ERROR_TEXT_LENGTH];
+	XGetErrorText(display, e->error_code, error_text, sizeof(error_text));
+	
+	printf("ZWin: Received X error\n");
+	printf("      Request: %d\n", int(e->request_code));
+	printf("      Error code: %d (%s)\n", int(e->error_code), error_text);
+	printf("      Resource ID: %d\n", e->resourceid);
+	return 0;
+}
 
 
 int main(int argc, const char** argv) {
@@ -157,8 +180,14 @@ int main(int argc, const char** argv) {
 		printf("ZWin: Failed to open X display\n");
 		return 0;
 	};
-	XGrabServer(display);
+	
 	root = DefaultRootWindow(display);
+	XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask);
+	XSync(display, false);
+	
+	XGrabServer(display);
+	
+	XSetErrorHandler(onXError);
 	
 	// Refuse to run if another window manager is running
 	/*wm_detected = false;
@@ -167,9 +196,6 @@ int main(int argc, const char** argv) {
 		printf("ZWin: Another window manager was detected on this display. ZWin cannot continue running.\n");
 		return 0;
 	};*/
-	
-	XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask);
-	XSync(display, false);
 	
 	// frame existing windows
 	Window returned_root, returned_parent;
@@ -184,7 +210,6 @@ int main(int argc, const char** argv) {
 		&num_toplevel_windows
 	);
 	
-	printf("num_toplevel_windows = %d\n", num_toplevel_windows);
 	for (unsigned int i = 0; i < num_toplevel_windows; i = i + 1) {
 		printf("start of for loop\n");
 		frame(toplevel_windows[i], true);
@@ -200,7 +225,7 @@ int main(int argc, const char** argv) {
 		// Get next event
 		XEvent event;
 		XNextEvent(display, &event);
-		printf("ZWin: Received event: ");
+		printf("ZWin: Received event ");
 		
 		// Dispatch event
 		switch (event.type) {
@@ -227,7 +252,7 @@ int main(int argc, const char** argv) {
 				printf("MapNotify\n");
 				onMapNotify(event.xmap);
 				break;
-			case UnmapNotify: //ignore
+			case UnmapNotify:
 				printf("UnmapNotify\n");
 				onUnmapNotify(event.xunmap);
 				break;
