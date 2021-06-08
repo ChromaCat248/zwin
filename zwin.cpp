@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <X11/Xlib.h>
+#include <X11/cursorfont.h>
 #include <unordered_map>
 #include <memory>
 
@@ -31,9 +32,12 @@ int checkOtherWM(Display* display, XErrorEvent* errorEvent) {
 void frame(Window window, bool was_created_before_wm) {
 	
 	// visual properties of frame
-	const unsigned int borderWidth = 3;
+	const unsigned int borderWidth = 0;
+	const unsigned int barHeight = 25;
+	const unsigned int barGap = 2;
 	const unsigned long borderColor = 0x888888;
 	const unsigned long backgroundColor = 0x444444;
+	const unsigned long barColor = 0x222222;
 	
 	// retrieve attributes of window to frame
 	XWindowAttributes attrs;
@@ -53,7 +57,7 @@ void frame(Window window, bool was_created_before_wm) {
 		attrs.x,
 		attrs.y,
 		attrs.width,
-		attrs.height,
+		attrs.height + barHeight,
 		borderWidth,
 		borderColor,
 		backgroundColor
@@ -66,6 +70,19 @@ void frame(Window window, bool was_created_before_wm) {
 		SubstructureRedirectMask | SubstructureNotifyMask
 	);
 	
+	// Create titlebar
+	const Window bar = XCreateSimpleWindow(
+		display,
+		frame,
+		attrs.x,
+		attrs.y,
+		attrs.width,
+		barHeight,
+		0,
+		barColor,
+		barColor
+	);
+	
 	// Add client to save set
 	XAddToSaveSet(display, window);
 	
@@ -74,11 +91,12 @@ void frame(Window window, bool was_created_before_wm) {
 		display,
 		window,
 		frame,
-		0, 0
+		0, barHeight
 	);
 	
 	// Map frame
 	XMapWindow(display, frame);
+	XMapWindow(display, bar);
 	
 	// Save frame
 	clients[window] = frame;
@@ -219,7 +237,11 @@ int main(int argc, const char** argv) {
 	XFree(toplevel_windows);
 	XUngrabServer(display);
 	
-	// Event loop
+	// set cursor
+	Cursor cursor = XCreateFontCursor(display, XC_arrow);
+	XDefineCursor(display, root, cursor);
+	
+	// event loop
 	while (true) {
 		
 		// Get next event
