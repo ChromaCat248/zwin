@@ -81,6 +81,8 @@ void frame(Window window, bool was_created_before_wm) {
 	
 	// Save frame
 	clients[window] = frame;
+	
+	printf("Framed a window\n");
 };
 
 void unframe(Window window) {
@@ -98,6 +100,8 @@ void unframe(Window window) {
 	XRemoveFromSaveSet(display, frame);
 	
 	clients.erase(window);
+	
+	printf("Unframed a window\n");
 };
 
 
@@ -125,7 +129,8 @@ void onReparentNotify(const XReparentEvent& event) {
 
 void onMapRequest(const XMapRequestEvent& event) {
 	frame(event.window, false);
-	XMapWindow(display, event.window);
+	XMapWindow(display, clients[event.window]);
+	printf("Mapped a window\n");
 };
 
 void onMapNotify(const XMapEvent& event) {
@@ -146,12 +151,14 @@ int main(int argc, const char** argv) {
 	
 	printf("ZWin: Starting ZWin\n");
 	
-	// Open X display
+	// Setup
 	display = XOpenDisplay(nullptr);
 	if (display == nullptr) {
 		printf("ZWin: Failed to open X display\n");
 		return 0;
 	};
+	XGrabServer(display);
+	root = DefaultRootWindow(display);
 	
 	// Refuse to run if another window manager is running
 	/*wm_detected = false;
@@ -161,9 +168,8 @@ int main(int argc, const char** argv) {
 		return 0;
 	};*/
 	
-	// Setup
-	XGrabServer(display);
-	root = DefaultRootWindow(display);
+	XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask);
+	XSync(display, false);
 	
 	// frame existing windows
 	Window returned_root, returned_parent;
@@ -178,46 +184,59 @@ int main(int argc, const char** argv) {
 		&num_toplevel_windows
 	);
 	
-	for (unsigned int i = 0; i < num_toplevel_windows; ++i) {
+	printf("num_toplevel_windows = %d\n", num_toplevel_windows);
+	for (unsigned int i = 0; i < num_toplevel_windows; i = i + 1) {
+		printf("start of for loop\n");
 		frame(toplevel_windows[i], true);
-	};
+		printf("end of for loop\n");
+	}
 	
-	XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask);
+	XFree(toplevel_windows);
+	XUngrabServer(display);
 	
 	// Event loop
-	for (;;) {
+	while (true) {
+		
 		// Get next event
 		XEvent event;
 		XNextEvent(display, &event);
-		printf("ZWin: Received event: %s\n", event);
+		printf("ZWin: Received event: ");
 		
 		// Dispatch event
 		switch (event.type) {
 			case CreateNotify: //ignore
+				printf("CreateNotify\n");
 				break;
 			case ConfigureRequest:
+				printf("ConfigureRequest\n");
 				onConfigureRequest(event.xconfigurerequest);
 				break;
 			case ConfigureNotify: //ignore
+				printf("ConfigureNotify\n");
 				onConfigureNotify(event.xconfigure);
 				break;
 			case ReparentNotify: //ignore
+				printf("ReparentNotify\n");
 				onReparentNotify(event.xreparent);
 				break;
 			case MapRequest:
+				printf("MapRequest\n");
 				onMapRequest(event.xmaprequest);
 				break;
 			case MapNotify: //ignore
+				printf("MapNotify\n");
 				onMapNotify(event.xmap);
 				break;
 			case UnmapNotify: //ignore
+				printf("UnmapNotify\n");
 				onUnmapNotify(event.xunmap);
 				break;
 			case DestroyNotify:
+				printf("DestroyNotify\n");
 				onDestroyNotify(event.xdestroywindow);
 				break;
 			default:
-				printf("ZWin: Unrecognized event, ignoring\n");
+				printf("Unrecognized (ignoring)\n");
 				break;
 		};
 	};
