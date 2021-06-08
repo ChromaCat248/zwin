@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# To run a command inside the window manager, open a terminal and set the DISPLAY environment variable to ":100"
+
 echo
 echo compiling...
 gcc -lX11 -lstdc++ ./zwin.cpp
@@ -8,7 +10,7 @@ echo done compiling.
 XEPHYR=$(whereis -b Xephyr | cut -f2 -d' ')
 xinit ./xinitrc -- \
     "$XEPHYR" \
-        :101 \
+        :100 \
         -ac \
         -screen 800x600 \
         -host-cursor
