@@ -1,6 +1,6 @@
 // ZWin
-// Mouse-driven Tiling Window Manager
-// By ChromaCat248
+// Mouse-driven tiling window manager
+// by ChromaCat248
 
 #include <cstdlib>
 #include <stdio.h>
@@ -10,16 +10,14 @@
 #include <unordered_map>
 #include <memory>
 
-using ::std::max;
-using ::std::string;
-using ::std::unique_ptr;
-
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static int xerror(Display *dpy, XErrorEvent *ee);
 bool wm_detected = false;
 std::unordered_map<Window, Window> clients;
 Display* display;
 Window root;
+
+
 
 int checkOtherWM(Display* display, XErrorEvent* errorEvent) {
 	if (static_cast<int>(errorEvent->error_code) == BadAccess) {
@@ -32,7 +30,7 @@ int checkOtherWM(Display* display, XErrorEvent* errorEvent) {
 void frame(Window window, bool was_created_before_wm) {
 	
 	// visual properties of frame
-	const unsigned int borderWidth = 0;
+	const unsigned int borderWidth = 3;
 	const unsigned int barHeight = 25;
 	const unsigned int barGap = 2;
 	const unsigned long borderColor = 0x888888;
@@ -50,7 +48,7 @@ void frame(Window window, bool was_created_before_wm) {
 		return;
 	}
 	
-	// Create frame
+	// create frame
 	const Window frame = XCreateSimpleWindow(
 		display,
 		root,
@@ -63,14 +61,14 @@ void frame(Window window, bool was_created_before_wm) {
 		backgroundColor
 	);
 	
-	// Select events on frame
+	// select events on frame
 	XSelectInput(
 		display,
 		frame,
 		SubstructureRedirectMask | SubstructureNotifyMask
 	);
 	
-	// Create titlebar
+	// create titlebar
 	const Window bar = XCreateSimpleWindow(
 		display,
 		frame,
@@ -83,10 +81,10 @@ void frame(Window window, bool was_created_before_wm) {
 		barColor
 	);
 	
-	// Add client to save set
+	// add client to save set
 	XAddToSaveSet(display, window);
 	
-	// Reparent client window
+	// reparent client window
 	XReparentWindow(
 		display,
 		window,
@@ -94,12 +92,25 @@ void frame(Window window, bool was_created_before_wm) {
 		0, barHeight
 	);
 	
-	// Map frame
+	// map frame
 	XMapWindow(display, frame);
 	XMapWindow(display, bar);
 	
-	// Save frame
+	// save frame
 	clients[window] = frame;
+	
+	
+	XGrabButton(
+		display,
+		Button1,
+		None,
+		bar,
+		false,
+		ButtonPressMask | ButtonReleaseMask | ButtonMotionMask,
+		GrabModeAsync,
+		GrabModeAsync,
+		None,
+		None);
 	
 	printf("ZWin: Framed a window\n");
 };
@@ -175,15 +186,36 @@ void onDestroyNotify(const XDestroyWindowEvent& event) {
 }
 
 
+void onButtonPress(const XButtonEvent& event) {
+	
+}
+
+void onButtonRelease(const XButtonEvent& event) {
+	
+}
+
+void onKeyPress(const XKeyEvent& event) {
+	
+}
+
+void onKeyRelease(const XKeyEvent& event) {
+	
+}
+
+void onMotionNotify(const XMotionEvent& event) {
+	
+}
+
+
 int onXError(Display* display, XErrorEvent* e) {
 	const int MAX_ERROR_TEXT_LENGTH = 1024;
 	char error_text[MAX_ERROR_TEXT_LENGTH];
 	XGetErrorText(display, e->error_code, error_text, sizeof(error_text));
 	
 	printf("ZWin: Received X error\n");
-	printf("      Request: %d\n", int(e->request_code));
-	printf("      Error code: %d (%s)\n", int(e->error_code), error_text);
-	printf("      Resource ID: %d\n", e->resourceid);
+	printf("		Request: %d\n", int(e->request_code));
+	printf("		Error code: %d (%s)\n", int(e->error_code), error_text);
+	printf("		Resource ID: %d\n", e->resourceid);
 	return 0;
 }
 
@@ -193,8 +225,8 @@ int main(int argc, const char** argv) {
 	printf("ZWin: Starting ZWin\n");
 	
 	// Setup
-	display = XOpenDisplay(nullptr);
-	if (display == nullptr) {
+	display = XOpenDisplay(0x0);
+	if (display == 0x0) {
 		printf("ZWin: Failed to open X display\n");
 		return 0;
 	};
@@ -281,6 +313,26 @@ int main(int argc, const char** argv) {
 			case DestroyNotify:
 				printf("DestroyNotify\n");
 				onDestroyNotify(event.xdestroywindow);
+				break;
+			case ButtonPress:
+				printf("ButtonPress\n");
+				onButtonPress(event.xbutton);
+				break;
+			case ButtonRelease:
+				printf("ButtonRelease\n");
+				onButtonPress(event.xbutton);
+				break;
+			case KeyPress:
+				printf("KeyPress\n");
+				onKeyPress(event.xkey);
+				break;
+			case KeyRelease:
+				printf("KeyRelease\n");
+				onKeyPress(event.xkey);
+				break;
+			case MotionNotify:
+				printf("MotionNotify\n");
+				onMotionNotify(event.xmotion);
 				break;
 			default:
 				printf("Unrecognized (ignoring)\n");
