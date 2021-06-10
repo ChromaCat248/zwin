@@ -10,14 +10,46 @@
 #include <unordered_map>
 #include <memory>
 
+struct wininfo {
+	bool tiled;
+	bool show;
+};
+
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static int xerror(Display *dpy, XErrorEvent *ee);
 bool wm_detected = false;
 std::unordered_map<Window, Window> clients;
+std::unordered_map<Window, wininfo> winattrs;
 Display* display;
 Window root;
 
+// cursors
+Cursor cursor_default;
+Cursor cursor_drag;
 
+// some variables relating to dragging
+int lastClickX = 0;
+int lastClickY = 0;
+int dragOffsetX = 0;
+int dragOffsetY = 0;
+bool dragging = false; // not needed for the dragging process itself, but for effects related to dragging
+
+Window getParent(Window window) {
+	Window frame;
+	Window root_placeholder;
+	Window* children_placeholder;
+	unsigned int nchildren_placeholder;
+	XQueryTree(
+		display,
+		window,
+		&root_placeholder,
+		&frame,
+		&children_placeholder,
+		&nchildren_placeholder
+	);
+	
+	return frame;
+};
 
 int checkOtherWM(Display* display, XErrorEvent* errorEvent) {
 	if (static_cast<int>(errorEvent->error_code) == BadAccess) {
@@ -124,12 +156,12 @@ void unframe(Window window) {
 	
 	XUnmapWindow(display, frame);
 	
-	/*XReparentWindow(
+	XReparentWindow(
 		display,
 		window,
 		root,
 		0, 0
-	);*/
+	);
 	
 	XRemoveFromSaveSet(display, frame);
 	
@@ -187,23 +219,82 @@ void onDestroyNotify(const XDestroyWindowEvent& event) {
 
 
 void onButtonPress(const XButtonEvent& event) {
+	int rootx;
+	int rooty;
+	int winx;
+	int winy;
+	unsigned int m;
+	Window frame = getParent(event.window);
 	
+	XQueryPointer(
+		display,
+		root,
+		&root,
+		&frame,
+		&rootx,
+		&rooty,
+		&winx,
+		&winy,
+		&m
+	);
+	
+	// 
+	XWindowAttributes frame_attrs;
+	XGetWindowAttributes(display, frame, &frame_attrs);
+	winx = rootx - frame_attrs.x;
+	winy = rooty - frame_attrs.y;
+	
+	lastClickX = rootx;
+	lastClickY = rooty;
+	dragOffsetX = winx;
+	dragOffsetY = winy;
 }
 
 void onButtonRelease(const XButtonEvent& event) {
 	
-}
-
-void onKeyPress(const XKeyEvent& event) {
+	// register titlebar button presses if not dragging
+	if (dragging == false) {
+		printf("click\n");
+	} else {
+		printf("drag\n");
+	}
 	
-}
-
-void onKeyRelease(const XKeyEvent& event) {
-	
+	dragging = false;
+	XDefineCursor(display, root, cursor_default);
 }
 
 void onMotionNotify(const XMotionEvent& event) {
+	dragging = true;
+	XDefineCursor(display, root, cursor_drag);
 	
+	int rootx;
+	int rooty;
+	int winx;
+	int winy;
+	unsigned int m;
+	Window window = event.window;
+	
+	XQueryPointer(
+		display,
+		root,
+		&root,
+		&window,
+		&rootx,
+		&rooty,
+		&winx,
+		&winy,
+		&m
+	);
+	
+	Window frame = getParent(event.window);
+	
+	int dragx = rootx - dragOffsetX;
+	int dragy = rooty - dragOffsetY;
+	XMoveWindow(
+		display,
+		frame,
+		dragx, dragy
+	);
 }
 
 
@@ -269,9 +360,11 @@ int main(int argc, const char** argv) {
 	XFree(toplevel_windows);
 	XUngrabServer(display);
 	
+	cursor_default = XCreateFontCursor(display, XC_arrow);
+	cursor_drag = XCreateFontCursor(display, XC_fleur);
+	
 	// set cursor
-	Cursor cursor = XCreateFontCursor(display, XC_arrow);
-	XDefineCursor(display, root, cursor);
+	XDefineCursor(display, root, cursor_default);
 	
 	// event loop
 	while (true) {
@@ -320,15 +413,7 @@ int main(int argc, const char** argv) {
 				break;
 			case ButtonRelease:
 				printf("ButtonRelease\n");
-				onButtonPress(event.xbutton);
-				break;
-			case KeyPress:
-				printf("KeyPress\n");
-				onKeyPress(event.xkey);
-				break;
-			case KeyRelease:
-				printf("KeyRelease\n");
-				onKeyPress(event.xkey);
+				onButtonRelease(event.xbutton);
 				break;
 			case MotionNotify:
 				printf("MotionNotify\n");
