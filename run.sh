@@ -4,7 +4,7 @@
 
 echo
 echo compiling...
-gcc -lX11 -lstdc++ -g ./zwin.cpp
+gcc -lX11 -lstdc++ -pthread -g ./zwin.cpp
 echo done compiling.
 
 XEPHYR=$(whereis -b Xephyr | cut -f2 -d' ')

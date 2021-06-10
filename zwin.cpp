@@ -3,23 +3,30 @@
 // by ChromaCat248
 
 #include <cstdlib>
+#include <string.h>
 #include <stdio.h>
-#include <sys/time.h>
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <unordered_map>
 #include <memory>
 
 struct wininfo {
+	Window* frame;
+	Window* titlebar;
+	GC gc;
 	bool tiled;
 	bool show;
+	const char* title;
+	const char* tile;
 };
 
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static int xerror(Display *dpy, XErrorEvent *ee);
 bool wm_detected = false;
-std::unordered_map<Window, Window> clients;
-std::unordered_map<Window, wininfo> winattrs;
+bool after_wm_detection = false;
+std::unordered_map<Window, Window> frames;
+std::unordered_map<Window, Window> titlebars;
+std::unordered_map<Window, wininfo> clients;
 Display* display;
 Window root;
 
@@ -35,34 +42,74 @@ int dragOffsetY = 0;
 bool dragging = false; // not needed for the dragging process itself, but for effects related to dragging
 
 Window getParent(Window window) {
-	Window frame;
 	Window root_placeholder;
+	Window parent;
 	Window* children_placeholder;
 	unsigned int nchildren_placeholder;
 	XQueryTree(
 		display,
 		window,
 		&root_placeholder,
-		&frame,
+		&parent,
 		&children_placeholder,
 		&nchildren_placeholder
 	);
 	
-	return frame;
+	return parent;
 };
 
-int checkOtherWM(Display* display, XErrorEvent* errorEvent) {
-	if (static_cast<int>(errorEvent->error_code) == BadAccess) {
-		wm_detected = true;
-	}
+Window* getChildren(Window window) {
+	Window root_placeholder;
+	Window parent_placeholder;
+	Window* children;
+	unsigned int nchildren_placeholder;
+	XQueryTree(
+		display,
+		window,
+		&root_placeholder,
+		&parent_placeholder,
+		&children,
+		&nchildren_placeholder
+	);
 	
-	return 0;
+	return children;
+};
+
+
+// window management functions
+
+GC create_gc(Display* dpy, Window window, bool inverse_colors) {
+	GC gc;
+	unsigned long valuemask = 0;
+	
+	XGCValues values;
+	unsigned int line_width = 2;
+	int line_style = LineSolid;
+	int cap_style = CapButt;
+	int join_style = JoinBevel;
+	int fill_style = FillSolid;
+	int screen = DefaultScreen(dpy);
+	
+	gc = XCreateGC(dpy, window, valuemask, &values);
+	
+	if (inverse_colors) {
+		XSetForeground(dpy, gc, WhitePixel(dpy, screen));
+		XSetBackground(dpy, gc, BlackPixel(dpy, screen));
+	} else {
+		XSetForeground(dpy, gc, BlackPixel(dpy, screen));
+		XSetBackground(dpy, gc, WhitePixel(dpy, screen));
+	};
+	
+	XSetLineAttributes(display, gc, line_width, line_style, cap_style, join_style);
+	XSetFillStyle(display, gc, fill_style);
+	
+	return gc;
 };
 
 void frame(Window window, bool was_created_before_wm) {
 	
 	// visual properties of frame
-	const unsigned int borderWidth = 3;
+	const unsigned int borderWidth = 1;
 	const unsigned int barHeight = 25;
 	const unsigned int barGap = 2;
 	const unsigned long borderColor = 0x888888;
@@ -128,8 +175,25 @@ void frame(Window window, bool was_created_before_wm) {
 	XMapWindow(display, frame);
 	XMapWindow(display, bar);
 	
+	clients[window].gc = create_gc(display, bar, true);
+	
+	// titlebar text
+	XDrawString(
+		display,
+		bar,
+		clients[window].gc,
+		30, 17,
+		clients[window].title,
+		strlen(clients[window].title)
+	);
+	
 	// save frame
-	clients[window] = frame;
+	frames[window] = frame;
+	clients[window].frame = &frames[window];
+	
+	// save titlebar
+	titlebars[window] = bar;
+	clients[window].titlebar = &titlebars[window];
 	
 	
 	XGrabButton(
@@ -144,15 +208,15 @@ void frame(Window window, bool was_created_before_wm) {
 		None,
 		None);
 	
-	printf("ZWin: Framed a window\n");
+	//printf("ZWin: Framed a window\n");
 };
 
 void unframe(Window window) {
-	if (!clients.count(window)) {
+	if (!frames.count(window)) {
 		return;
 	};	
 	
-	const Window frame = clients[window];
+	const Window frame = frames[window];
 	
 	XUnmapWindow(display, frame);
 	
@@ -165,9 +229,9 @@ void unframe(Window window) {
 	
 	XRemoveFromSaveSet(display, frame);
 	
-	clients.erase(window);
+	frames.erase(window);
 	
-	printf("ZWin: Unframed a window\n");
+	//printf("ZWin: Unframed a window\n");
 };
 
 
@@ -183,6 +247,8 @@ void onConfigureRequest(const XConfigureRequestEvent& event) {
 	changes.stack_mode = event.detail;
 	
 	XConfigureWindow(display, event.window, event.value_mask, &changes);
+	
+	XFetchName(display, event.window, (char**)&clients[event.window].title);
 };
 
 void onConfigureNotify(const XConfigureEvent& event) {
@@ -204,7 +270,24 @@ void onMapNotify(const XMapEvent& event) {
 };
 
 void onUnmapNotify(const XUnmapEvent& event) {
-	if (!clients.count(event.window)) {
+	// if the window titles aren't refreshed they'll be wiped away by becoming unviewable
+	// (e.g. disappearing behind a window, going off-screen)
+	for (const auto [client, frame] : frames) {
+		if (client != event.window) {
+			Window bar = titlebars[client];
+			XFetchName(display, client, (char**)&clients[client].title);
+			XDrawString(
+				display,
+				bar,
+				clients[client].gc,
+				30, 17,
+				clients[client].title,
+				strlen(clients[client].title)
+			);
+		}
+	};
+	
+	if (!frames.count(event.window)) {
 		return;
 	}
 	if (event.event == root) {
@@ -214,11 +297,13 @@ void onUnmapNotify(const XUnmapEvent& event) {
 };
 
 void onDestroyNotify(const XDestroyWindowEvent& event) {
-	// ignore
+	clients.erase(event.window);
 }
 
 
 void onButtonPress(const XButtonEvent& event) {
+	XRaiseWindow(display, getParent(event.window));
+	
 	int rootx;
 	int rooty;
 	int winx;
@@ -248,15 +333,29 @@ void onButtonPress(const XButtonEvent& event) {
 	lastClickY = rooty;
 	dragOffsetX = winx;
 	dragOffsetY = winy;
+	
+	for (const auto [client, frame] : frames) {
+		Window bar = titlebars[client];
+		XFetchName(display, client, (char**)&clients[client].title);
+		XDrawString(
+			display,
+			bar,
+			clients[client].gc,
+			30, 17,
+			clients[client].title,
+			strlen(clients[client].title)
+		);
+		
+	};
 }
 
 void onButtonRelease(const XButtonEvent& event) {
 	
 	// register titlebar button presses if not dragging
 	if (dragging == false) {
-		printf("click\n");
+		//printf("click\n");
 	} else {
-		printf("drag\n");
+		//printf("drag\n");
 	}
 	
 	dragging = false;
@@ -295,48 +394,68 @@ void onMotionNotify(const XMotionEvent& event) {
 		frame,
 		dragx, dragy
 	);
-}
+	
+	for (const auto [client, frame] : frames) {
+		Window bar = titlebars[client];
+		XFetchName(display, client, (char**)&clients[client].title);
+		XDrawString(
+			display,
+			bar,
+			clients[client].gc,
+			30, 17,
+			clients[client].title,
+			strlen(clients[client].title)
+		);
+		
+	};
+};
 
 
 int onXError(Display* display, XErrorEvent* e) {
+	if (e->error_code == BadAccess) {
+		wm_detected = true;
+		return 0;
+	};
+	
 	const int MAX_ERROR_TEXT_LENGTH = 1024;
 	char error_text[MAX_ERROR_TEXT_LENGTH];
 	XGetErrorText(display, e->error_code, error_text, sizeof(error_text));
 	
 	printf("ZWin: Received X error\n");
-	printf("		Request: %d\n", int(e->request_code));
-	printf("		Error code: %d (%s)\n", int(e->error_code), error_text);
-	printf("		Resource ID: %d\n", e->resourceid);
+	printf("	Request: %d\n", int(e->request_code));
+	printf("	Error code: %d\n", int(e->error_code));
+	printf("	Error text: %s\n", error_text);
+	printf("	Resource ID: %d\n", e->resourceid);
+	
 	return 0;
 }
-
 
 int main(int argc, const char** argv) {
 	
 	printf("ZWin: Starting ZWin\n");
 	
-	// Setup
+	// open display
 	display = XOpenDisplay(0x0);
 	if (display == 0x0) {
 		printf("ZWin: Failed to open X display\n");
 		return 0;
 	};
 	
+	// set error handler
+	XSetErrorHandler(onXError);
+	
 	root = DefaultRootWindow(display);
 	XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask);
+	
+	if (wm_detected == true) {
+		printf("ZWin: Cannot run alongside another window manager\n");
+		return 0;
+	};
+	after_wm_detection = true;
+	
 	XSync(display, false);
 	
 	XGrabServer(display);
-	
-	XSetErrorHandler(onXError);
-	
-	// Refuse to run if another window manager is running
-	/*wm_detected = false;
-	XSetErrorHandler(checkOtherWM);
-	if (wm_detected = true) {
-		printf("ZWin: Another window manager was detected on this display. ZWin cannot continue running.\n");
-		return 0;
-	};*/
 	
 	// frame existing windows
 	Window returned_root, returned_parent;
@@ -352,9 +471,7 @@ int main(int argc, const char** argv) {
 	);
 	
 	for (unsigned int i = 0; i < num_toplevel_windows; i = i + 1) {
-		printf("start of for loop\n");
 		frame(toplevel_windows[i], true);
-		printf("end of for loop\n");
 	}
 	
 	XFree(toplevel_windows);
@@ -369,66 +486,64 @@ int main(int argc, const char** argv) {
 	// event loop
 	while (true) {
 		
-		// Get next event
+		// get next event
 		XEvent event;
 		XNextEvent(display, &event);
-		printf("ZWin: Received event ");
 		
-		// Dispatch event
+		// dispatch event
 		switch (event.type) {
 			case CreateNotify: //ignore
-				printf("CreateNotify\n");
+				//printf("CreateNotify\n");
 				break;
 			case ConfigureRequest:
-				printf("ConfigureRequest\n");
+				//printf("ConfigureRequest\n");
 				onConfigureRequest(event.xconfigurerequest);
 				break;
 			case ConfigureNotify: //ignore
-				printf("ConfigureNotify\n");
+				//printf("ConfigureNotify\n");
 				onConfigureNotify(event.xconfigure);
 				break;
 			case ReparentNotify: //ignore
-				printf("ReparentNotify\n");
+				//printf("ReparentNotify\n");
 				onReparentNotify(event.xreparent);
 				break;
 			case MapRequest:
-				printf("MapRequest\n");
+				//printf("MapRequest\n");
 				onMapRequest(event.xmaprequest);
 				break;
 			case MapNotify: //ignore
-				printf("MapNotify\n");
+				//printf("MapNotify\n");
 				onMapNotify(event.xmap);
 				break;
 			case UnmapNotify:
-				printf("UnmapNotify\n");
+				//printf("UnmapNotify\n");
 				onUnmapNotify(event.xunmap);
 				break;
 			case DestroyNotify:
-				printf("DestroyNotify\n");
+				//printf("DestroyNotify\n");
 				onDestroyNotify(event.xdestroywindow);
 				break;
 			case ButtonPress:
-				printf("ButtonPress\n");
+				//printf("ButtonPress\n");
 				onButtonPress(event.xbutton);
 				break;
 			case ButtonRelease:
-				printf("ButtonRelease\n");
+				//printf("ButtonRelease\n");
 				onButtonRelease(event.xbutton);
 				break;
 			case MotionNotify:
-				printf("MotionNotify\n");
+				//printf("MotionNotify\n");
 				onMotionNotify(event.xmotion);
 				break;
 			default:
-				printf("Unrecognized (ignoring)\n");
+				//printf("Unrecognized (ignoring)\n");
 				break;
 		};
 	};
 	
-	// Exit out of window manager
-	printf("ZWin: Exiting\n");
-	XUngrabServer(display);
+	// exit out of window manager
 	XCloseDisplay(display);
+	printf("ZWin: Exiting, have a nice day\n");
 	return 0;
 	
 };
