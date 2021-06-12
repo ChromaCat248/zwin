@@ -17,7 +17,17 @@ struct wininfo {
 	bool tiled;
 	bool show;
 	const char* title;
-	const char* tile;
+};
+
+struct tile {
+	bool isRootTile;
+	bool empty; // only for root tiles
+	int screen; // only for root tiles
+	int splits;
+	std::unordered_map<unsigned int, tile*>* tiles;
+	double sizePortion; // will be a number between 0 and 1 that represents the tile's share of its parent tile's size
+	Window* content; // never used on split tiles
+	tile* parentTile; // never used on root tiles
 };
 
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
@@ -27,6 +37,7 @@ bool after_wm_detection = false;
 std::unordered_map<Window, Window> frames;
 std::unordered_map<Window, Window> titlebars;
 std::unordered_map<Window, wininfo> clients;
+std::unordered_map<unsigned int, tile*> rootTiles;
 Display* display;
 Window root;
 
@@ -40,6 +51,37 @@ int lastClickY = 0;
 int dragOffsetX = 0;
 int dragOffsetY = 0;
 bool dragging = false; // not needed for the dragging process itself, but for effects related to dragging
+
+
+// window management functions
+
+GC create_gc(Display* dpy, Window window, bool inverse_colors) {
+	GC gc;
+	unsigned long valuemask = 0;
+	
+	XGCValues values;
+	unsigned int line_width = 2;
+	int line_style = LineSolid;
+	int cap_style = CapButt;
+	int join_style = JoinBevel;
+	int fill_style = FillSolid;
+	int screen = DefaultScreen(dpy);
+	
+	gc = XCreateGC(dpy, window, valuemask, &values);
+	
+	if (inverse_colors) {
+		XSetForeground(dpy, gc, WhitePixel(dpy, screen));
+		XSetBackground(dpy, gc, BlackPixel(dpy, screen));
+	} else {
+		XSetForeground(dpy, gc, BlackPixel(dpy, screen));
+		XSetBackground(dpy, gc, WhitePixel(dpy, screen));
+	};
+	
+	XSetLineAttributes(display, gc, line_width, line_style, cap_style, join_style);
+	XSetFillStyle(display, gc, fill_style);
+	
+	return gc;
+};
 
 Window getParent(Window window) {
 	Window root_placeholder;
@@ -75,36 +117,62 @@ Window* getChildren(Window window) {
 	return children;
 };
 
+void createRootTile(int screen, int margin) {
+	// create the root tile
+	tile rt;
+	rt.isRootTile = true;
+	rt.screen = screen;
+	rt.splits = 0;
+	rt.sizePortion = 1;
+	
+	// append the new root tile to the list of root tiles
+	unsigned int index = 0;
+	while (rootTiles.count(index)) {
+		index++;
+	};
+	rootTiles[index] = &rt;
+};
 
-// window management functions
-
-GC create_gc(Display* dpy, Window window, bool inverse_colors) {
-	GC gc;
-	unsigned long valuemask = 0;
-	
-	XGCValues values;
-	unsigned int line_width = 2;
-	int line_style = LineSolid;
-	int cap_style = CapButt;
-	int join_style = JoinBevel;
-	int fill_style = FillSolid;
-	int screen = DefaultScreen(dpy);
-	
-	gc = XCreateGC(dpy, window, valuemask, &values);
-	
-	if (inverse_colors) {
-		XSetForeground(dpy, gc, WhitePixel(dpy, screen));
-		XSetBackground(dpy, gc, BlackPixel(dpy, screen));
-	} else {
-		XSetForeground(dpy, gc, BlackPixel(dpy, screen));
-		XSetBackground(dpy, gc, WhitePixel(dpy, screen));
+void correctTiles(tile* tileToCorrect, bool recurse) {
+	double totalSize = 0;
+	for (auto [index, child] : *tileToCorrect->tiles) {
+		totalSize += child->sizePortion;
+	};
+	for (auto [index, child] : *tileToCorrect->tiles) {
+		child->sizePortion /= totalSize;
 	};
 	
-	XSetLineAttributes(display, gc, line_width, line_style, cap_style, join_style);
-	XSetFillStyle(display, gc, fill_style);
-	
-	return gc;
+	// do the same for all child tiles
+	if (recurse) {
+		for (auto [index, child] : *tileToCorrect->tiles) {
+			correctTiles(child, true);
+		};
+	};
 };
+
+void insertTile(tile* tileToSplit, Window windowToInsert, int index) {
+	if (tileToSplit->empty) {
+		tileToSplit->empty = false;
+		tileToSplit->content = &windowToInsert;
+		return;
+	};
+	
+	correctTiles(tileToSplit, false);
+	double sizePortion = 1 / tileToSplit->splits + 1;
+	tileToSplit->splits++;
+	
+	tile newTile;
+	newTile.isRootTile = false;
+	newTile.splits = 0;
+	
+	
+};
+
+void renderTiles(tile* rootTile, unsigned int sizeX, unsigned int sizeY, unsigned int posX, unsigned int posY) {
+	
+};
+
+
 
 void frame(Window window, bool was_created_before_wm) {
 	
@@ -145,6 +213,12 @@ void frame(Window window, bool was_created_before_wm) {
 		display,
 		frame,
 		SubstructureRedirectMask | SubstructureNotifyMask
+	);
+	
+	XSelectInput(
+		display,
+		window,
+		PropertyChangeMask
 	);
 	
 	// create titlebar
@@ -236,6 +310,10 @@ void unframe(Window window) {
 
 
 
+void onCreateNotify(const XCreateWindowEvent& event) {
+	
+};
+
 void onConfigureRequest(const XConfigureRequestEvent& event) {
 	XWindowChanges changes;
 	changes.x = event.x;
@@ -262,7 +340,6 @@ void onReparentNotify(const XReparentEvent& event) {
 void onMapRequest(const XMapRequestEvent& event) {
 	frame(event.window, false);
 	XMapWindow(display, event.window);
-	printf("ZWin: Mapped a window\n");
 };
 
 void onMapNotify(const XMapEvent& event) {
@@ -333,20 +410,6 @@ void onButtonPress(const XButtonEvent& event) {
 	lastClickY = rooty;
 	dragOffsetX = winx;
 	dragOffsetY = winy;
-	
-	for (const auto [client, frame] : frames) {
-		Window bar = titlebars[client];
-		XFetchName(display, client, (char**)&clients[client].title);
-		XDrawString(
-			display,
-			bar,
-			clients[client].gc,
-			30, 17,
-			clients[client].title,
-			strlen(clients[client].title)
-		);
-		
-	};
 }
 
 void onButtonRelease(const XButtonEvent& event) {
@@ -397,7 +460,6 @@ void onMotionNotify(const XMotionEvent& event) {
 	
 	for (const auto [client, frame] : frames) {
 		Window bar = titlebars[client];
-		XFetchName(display, client, (char**)&clients[client].title);
 		XDrawString(
 			display,
 			bar,
@@ -408,6 +470,12 @@ void onMotionNotify(const XMotionEvent& event) {
 		);
 		
 	};
+};
+
+void onPropertyNotify(const XPropertyEvent& event) {
+	XFetchName(display, event.window, (char**)&clients[event.window].title);
+	XUnmapWindow(display, titlebars[event.window]);
+	XMapWindow(display, titlebars[event.window]);
 };
 
 
@@ -483,6 +551,12 @@ int main(int argc, const char** argv) {
 	// set cursor
 	XDefineCursor(display, root, cursor_default);
 	
+	// root tile
+	tile rootTile;
+	rootTile.isRootTile = true;
+	rootTile.screen = 0;
+	rootTile.splits = 0;
+	
 	// event loop
 	while (true) {
 		
@@ -494,6 +568,7 @@ int main(int argc, const char** argv) {
 		switch (event.type) {
 			case CreateNotify: //ignore
 				//printf("CreateNotify\n");
+				onCreateNotify(event.xcreatewindow);
 				break;
 			case ConfigureRequest:
 				//printf("ConfigureRequest\n");
@@ -535,8 +610,12 @@ int main(int argc, const char** argv) {
 				//printf("MotionNotify\n");
 				onMotionNotify(event.xmotion);
 				break;
+			case PropertyNotify:
+				//printf("PropertyNotify");
+				onPropertyNotify(event.xproperty);
+				break;
 			default:
-				//printf("Unrecognized (ignoring)\n");
+				printf("ZWin: Ignoring unrecognized event (type: %d)\n", event.type);
 				break;
 		};
 	};
