@@ -6,14 +6,18 @@
 #include <string.h>
 #include <stdio.h>
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <unordered_map>
-#include <memory>
 
 struct wininfo {
 	Window* frame;
 	Window* titlebar;
 	GC gc;
+	bool framed; // set to false on panel/background windows
+	int edge; // 0: background, 1: top, 2: right, 3: bottom, 4: left
+	bool hasTitlebar; // set to false on gtk windows
 	bool tiled;
 	bool show;
 	const char* title;
@@ -51,6 +55,10 @@ int lastClickY = 0;
 int dragOffsetX = 0;
 int dragOffsetY = 0;
 bool dragging = false; // not needed for the dragging process itself, but for effects related to dragging
+
+// gap sizes
+unsigned int outerGap = 10;
+unsigned int innerGap = 10;
 
 
 // window management functions
@@ -117,7 +125,7 @@ Window* getChildren(Window window) {
 	return children;
 };
 
-void createRootTile(int screen, int margin) {
+void createRootTile(int screen) {
 	// create the root tile
 	tile rt;
 	rt.isRootTile = true;
@@ -134,6 +142,7 @@ void createRootTile(int screen, int margin) {
 };
 
 void correctTiles(tile* tileToCorrect, bool recurse) {
+	// correct sizes
 	double totalSize = 0;
 	for (auto [index, child] : *tileToCorrect->tiles) {
 		totalSize += child->sizePortion;
@@ -157,22 +166,102 @@ void insertTile(tile* tileToSplit, Window windowToInsert, int index) {
 		return;
 	};
 	
-	correctTiles(tileToSplit, false);
 	double sizePortion = 1 / tileToSplit->splits + 1;
 	tileToSplit->splits++;
 	
-	tile newTile;
-	newTile.isRootTile = false;
-	newTile.splits = 0;
+	tile* newTile;
+	newTile->isRootTile = false;
+	newTile->splits = 0;
+	newTile->content = &windowToInsert;
 	
+	// snap to end of tile if index is greater than the size of the tile
+	int parentTileSize = 0;
+	while (tileToSplit->tiles->count(parentTileSize)) {
+		parentTileSize++;
+	};
+	if (index > parentTileSize) {
+		index = parentTileSize + 1;
+	};
+	
+	// offset every tile
+	for (int i = parentTileSize; i > index; i--) {
+		tileToSplit->tiles[i] = tileToSplit->tiles[i - 1];
+	};
+	
+	
+	
+	(*tileToSplit->tiles)[index] = newTile;
+};
+
+void removeTile(tile* targetTile, unsigned int index) {
 	
 };
 
-void renderTiles(tile* rootTile, unsigned int sizeX, unsigned int sizeY, unsigned int posX, unsigned int posY) {
+void renderTiles(tile* rootTile, int gapSize, unsigned int sizeX, unsigned int sizeY, unsigned int posX, unsigned int posY, bool horizontal) {
+	if (rootTile->empty) {
+		return;
+	};
 	
+	if (rootTile->splits == 0) {
+		XMoveWindow(
+			display,
+			*rootTile->content,
+			posX, posY
+		);
+		XResizeWindow(
+			display,
+			*rootTile->content,
+			sizeX, sizeY
+		);
+		return;
+	};
+	
+	int currentOffset = 0;
+	if (horizontal) {
+		for (auto [index, newTile] : *rootTile->tiles) {
+			renderTiles(
+				newTile,
+				gapSize,
+				(sizeX * newTile->sizePortion) - (gapSize * rootTile->splits),
+				sizeY,
+				posX + currentOffset,
+				posY,
+				false
+			);
+			currentOffset += (sizeX * newTile->sizePortion) + gapSize;
+		};
+	} else {
+		for (auto [index, newTile] : *rootTile->tiles) {
+			renderTiles(
+				newTile,
+				gapSize,
+				sizeX,
+				(sizeY * newTile->sizePortion) - (gapSize * rootTile->splits),
+				posX,
+				posY + currentOffset,
+				false
+			);
+			currentOffset += (sizeX * newTile->sizePortion) + gapSize;
+		};
+	};
 };
 
-
+void tileWindow(int tileMode, Window window) {
+	tile* tileToSplit;
+	unsigned int index;
+	
+	// select tile to insert new window into
+	switch(tileMode) {
+		default:
+			// add to the far right or at the bottom of the root tile
+			tileToSplit = rootTiles[0];
+			index = tileToSplit->splits + 1;
+			break;
+	};
+	
+	correctTiles(tileToSplit, true);
+	insertTile(tileToSplit, window, index);
+};
 
 void frame(Window window, bool was_created_before_wm) {
 	
@@ -187,11 +276,20 @@ void frame(Window window, bool was_created_before_wm) {
 	// retrieve attributes of window to frame
 	XWindowAttributes attrs;
 	XGetWindowAttributes(display, window, &attrs);
+	printf("%d\n", attrs.c_class);
+	
+	// retrieve window class
+	XClassHint windowClass;
+	XGetClassHint(
+		display,
+		window,
+		&windowClass
+	);
+	
+	printf("%s, %s\n", windowClass.res_class, windowClass.res_class);
 	
 	// only frame pre-existing windows if they are visible and don't set override_redirect
-	if (was_created_before_wm &&
-		(attrs.override_redirect || attrs.map_state != IsViewable)
-	   ) {
+	if (was_created_before_wm && (attrs.override_redirect || attrs.map_state != IsViewable)) {
 		return;
 	}
 	
@@ -207,6 +305,7 @@ void frame(Window window, bool was_created_before_wm) {
 		borderColor,
 		backgroundColor
 	);
+	
 	
 	// select events on frame
 	XSelectInput(
@@ -252,14 +351,15 @@ void frame(Window window, bool was_created_before_wm) {
 	clients[window].gc = create_gc(display, bar, true);
 	
 	// titlebar text
-	XDrawString(
+	// causes an error when drawing on polybar's titlebar that shouldn't be there
+	/*XDrawString(
 		display,
 		bar,
 		clients[window].gc,
 		30, 17,
 		clients[window].title,
 		strlen(clients[window].title)
-	);
+	);*/
 	
 	// save frame
 	frames[window] = frame;
@@ -552,10 +652,7 @@ int main(int argc, const char** argv) {
 	XDefineCursor(display, root, cursor_default);
 	
 	// root tile
-	tile rootTile;
-	rootTile.isRootTile = true;
-	rootTile.screen = 0;
-	rootTile.splits = 0;
+	createRootTile(0);
 	
 	// event loop
 	while (true) {
@@ -567,51 +664,51 @@ int main(int argc, const char** argv) {
 		// dispatch event
 		switch (event.type) {
 			case CreateNotify: //ignore
-				//printf("CreateNotify\n");
+				printf("CreateNotify\n");
 				onCreateNotify(event.xcreatewindow);
 				break;
 			case ConfigureRequest:
-				//printf("ConfigureRequest\n");
+				printf("ConfigureRequest\n");
 				onConfigureRequest(event.xconfigurerequest);
 				break;
 			case ConfigureNotify: //ignore
-				//printf("ConfigureNotify\n");
+				printf("ConfigureNotify\n");
 				onConfigureNotify(event.xconfigure);
 				break;
 			case ReparentNotify: //ignore
-				//printf("ReparentNotify\n");
+				printf("ReparentNotify\n");
 				onReparentNotify(event.xreparent);
 				break;
 			case MapRequest:
-				//printf("MapRequest\n");
+				printf("MapRequest\n");
 				onMapRequest(event.xmaprequest);
 				break;
 			case MapNotify: //ignore
-				//printf("MapNotify\n");
+				printf("MapNotify\n");
 				onMapNotify(event.xmap);
 				break;
 			case UnmapNotify:
-				//printf("UnmapNotify\n");
+				printf("UnmapNotify\n");
 				onUnmapNotify(event.xunmap);
 				break;
 			case DestroyNotify:
-				//printf("DestroyNotify\n");
+				printf("DestroyNotify\n");
 				onDestroyNotify(event.xdestroywindow);
 				break;
 			case ButtonPress:
-				//printf("ButtonPress\n");
+				printf("ButtonPress\n");
 				onButtonPress(event.xbutton);
 				break;
 			case ButtonRelease:
-				//printf("ButtonRelease\n");
+				printf("ButtonRelease\n");
 				onButtonRelease(event.xbutton);
 				break;
 			case MotionNotify:
-				//printf("MotionNotify\n");
+				printf("MotionNotify\n");
 				onMotionNotify(event.xmotion);
 				break;
 			case PropertyNotify:
-				//printf("PropertyNotify");
+				printf("PropertyNotify");
 				onPropertyNotify(event.xproperty);
 				break;
 			default:
