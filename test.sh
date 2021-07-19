@@ -6,10 +6,10 @@ echo compiling...
 make
 echo done compiling.
 
-# Band-aid solution to the problem of "could not resolve keysym" flooding, once I figure out why that happens this won't be needed
-echo
-read -p "Press Ctrl+C to abort or press any other key to continue." -n1 -s
-echo
+# Uncomment if you get xkbcomp flooding and need time to look at compiler errors
+#echo
+#read -p "Press Ctrl+C to abort or press any other key to continue." -n1 -s
+#echo
 
 XEPHYR=$(whereis -b Xephyr | cut -f2 -d' ')
 xinit ./xinitrc -- \
