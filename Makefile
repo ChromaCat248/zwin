@@ -2,10 +2,12 @@ CC=gcc
 CFLAGS=-lX11 -lstdc++ -g
 
 all:
-	$(CC) $(CFLAGS) ./zwin.cpp -o zwin
+	@$(CC) $(CFLAGS) ./zwin.cpp -o zwin
 
 clean:
-	rm ./zwin
+	if [ -e ./zwin ] {
+		rm ./zwin
+	}
 
 #install:
 #	sudo cp ./zwin /bin

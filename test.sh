@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# To run a command inside the window manager, open a terminal and set the DISPLAY environment variable to ":100"
+# ZWin Test script
+# Opens a ZWin instance inside a Xephyr window
 
 echo compiling...
 make
@@ -10,6 +11,9 @@ echo done compiling.
 #echo
 #read -p "Press Ctrl+C to abort or press any other key to continue." -n1 -s
 #echo
+
+echo; echo
+echo To run applications within the Xephyr window, open a terminal and set the DISPLAY environment variable to \":100\".
 
 XEPHYR=$(whereis -b Xephyr | cut -f2 -d' ')
 xinit ./xinitrc -- \
