@@ -9,7 +9,10 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
-#include <unordered_map>
+#include <map>
+
+// config file
+#include "config.h"
 
 struct wininfo {
 	Window* frame;
@@ -28,7 +31,7 @@ struct tile {
 	bool empty; // only for root tiles
 	int screen; // only for root tiles
 	int splits;
-	std::unordered_map<unsigned int, tile*>* tiles;
+	std::map<unsigned int, tile*>* tiles;
 	double sizePortion; // will be a number between 0 and 1 that represents the tile's share of its parent tile's size
 	Window* content; // never used on split tiles
 	tile* parentTile; // never used on root tiles
@@ -38,10 +41,10 @@ static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static int xerror(Display *dpy, XErrorEvent *ee);
 bool wm_detected = false;
 bool after_wm_detection = false;
-std::unordered_map<Window, Window> frames;
-std::unordered_map<Window, Window> titlebars;
-std::unordered_map<Window, wininfo> clients;
-std::unordered_map<unsigned int, tile*> rootTiles;
+std::map<Window, Window> frames;
+std::map<Window, Window> titlebars;
+std::map<Window, wininfo> clients;
+std::map<unsigned int, tile*> rootTiles;
 Display* display;
 Window root;
 
@@ -56,10 +59,8 @@ int dragOffsetX = 0;
 int dragOffsetY = 0;
 bool dragging = false; // not needed for the dragging process itself, but for effects related to dragging
 
-// gap sizes
-unsigned int outerGap = 10;
-unsigned int innerGap = 10;
-
+// set to true when the wm is meant to exit
+bool exitTrigger = false;
 
 // window management functions
 
@@ -217,33 +218,18 @@ void renderTiles(tile* rootTile, int gapSize, unsigned int sizeX, unsigned int s
 	};
 	
 	int currentOffset = 0;
-	if (horizontal) {
-		for (auto [index, newTile] : *rootTile->tiles) {
-			renderTiles(
-				newTile,
-				gapSize,
-				(sizeX * newTile->sizePortion) - (gapSize * rootTile->splits),
-				sizeY,
-				posX + currentOffset,
-				posY,
-				false
-			);
-			currentOffset += (sizeX * newTile->sizePortion) + gapSize;
-		};
-	} else {
-		for (auto [index, newTile] : *rootTile->tiles) {
-			renderTiles(
-				newTile,
-				gapSize,
-				sizeX,
-				(sizeY * newTile->sizePortion) - (gapSize * rootTile->splits),
-				posX,
-				posY + currentOffset,
-				false
-			);
-			currentOffset += (sizeX * newTile->sizePortion) + gapSize;
-		};
-	};
+    for (auto [index, newTile] : *rootTile->tiles) {
+        renderTiles(
+            newTile,
+            gapSize,
+            (sizeX * newTile->sizePortion) - (gapSize * rootTile->splits),
+            sizeY,
+            posX + currentOffset,
+            posY,
+            !horizontal
+        );
+        currentOffset += (sizeX * newTile->sizePortion) + gapSize;
+    };
 };
 
 void tileWindow(int tileMode, Window window) {
@@ -252,6 +238,11 @@ void tileWindow(int tileMode, Window window) {
 	
 	// select tile to insert new window into
 	switch(tileMode) {
+        case 1:
+			// add to the far right or at the bottom of the root tile
+			tileToSplit = rootTiles[0];
+			index = tileToSplit->splits + 1;
+			break;
 		default:
 			// add to the far right or at the bottom of the root tile
 			tileToSplit = rootTiles[0];
@@ -265,28 +256,10 @@ void tileWindow(int tileMode, Window window) {
 
 void frame(Window window, bool was_created_before_wm) {
 	
-	// visual properties of frame
-	const unsigned int borderWidth = 1;
-	const unsigned int barHeight = 25;
-	const unsigned int barGap = 2;
-	const unsigned long borderColor = 0x888888;
-	const unsigned long backgroundColor = 0x444444;
-	const unsigned long barColor = 0x222222;
-	
 	// retrieve attributes of window to frame
 	XWindowAttributes attrs;
 	XGetWindowAttributes(display, window, &attrs);
 	printf("%d\n", attrs.c_class);
-	
-	// retrieve window class
-	XClassHint windowClass;
-	XGetClassHint(
-		display,
-		window,
-		&windowClass
-	);
-	
-	printf("%s, %s\n", windowClass.res_class, windowClass.res_class);
 	
 	// only frame pre-existing windows if they are visible and don't set override_redirect
 	if (was_created_before_wm && (attrs.override_redirect || attrs.map_state != IsViewable)) {
@@ -349,17 +322,9 @@ void frame(Window window, bool was_created_before_wm) {
 	XMapWindow(display, bar);
 	
 	clients[window].gc = create_gc(display, bar, true);
-	
-	// titlebar text
-	// causes an error when drawing on polybar's titlebar that shouldn't be there
-	/*XDrawString(
-		display,
-		bar,
-		clients[window].gc,
-		30, 17,
-		clients[window].title,
-		strlen(clients[window].title)
-	);*/
+
+	// tile window
+	tileWindow(0, frame);
 	
 	// save frame
 	frames[window] = frame;
@@ -381,7 +346,7 @@ void frame(Window window, bool was_created_before_wm) {
 		GrabModeAsync,
 		None,
 		None);
-	
+
 	//printf("ZWin: Framed a window\n");
 };
 
@@ -443,7 +408,9 @@ void onMapRequest(const XMapRequestEvent& event) {
 };
 
 void onMapNotify(const XMapEvent& event) {
-	// ignore
+	XFetchName(display, event.window, (char**)&clients[event.window].title);
+	XUnmapWindow(display, titlebars[event.window]);
+	XMapWindow(display, titlebars[event.window]);
 };
 
 void onUnmapNotify(const XUnmapEvent& event) {
@@ -520,6 +487,9 @@ void onButtonRelease(const XButtonEvent& event) {
 	} else {
 		//printf("drag\n");
 	}
+
+	// tile window
+	tileWindow(0, event.window);
 	
 	dragging = false;
 	XDefineCursor(display, root, cursor_default);
@@ -593,7 +563,7 @@ int onXError(Display* display, XErrorEvent* e) {
 	printf("	Request: %d\n", int(e->request_code));
 	printf("	Error code: %d\n", int(e->error_code));
 	printf("	Error text: %s\n", error_text);
-	printf("	Resource ID: %d\n", e->resourceid);
+	printf("	Resource ID: %lu\n", e->resourceid);
 	
 	return 0;
 }
@@ -653,9 +623,18 @@ int main(int argc, const char** argv) {
 	
 	// root tile
 	createRootTile(0);
+
+    // rc
+    int rcOut = rc();
+    if(rcOut) {
+        printf("ZWin: RC returned error %d\n", rcOut);
+        if (exitOnRCError) {
+            return 0;
+        };
+    };
 	
 	// event loop
-	while (true) {
+	while (exitTrigger == false) {
 		
 		// get next event
 		XEvent event;
