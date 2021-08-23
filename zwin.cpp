@@ -14,7 +14,7 @@
 // config file
 #include "config.h"
 
-struct wininfo {
+struct winInfo {
 	Window* frame;
 	Window* titlebar;
 	GC gc;
@@ -43,7 +43,7 @@ bool wm_detected = false;
 bool after_wm_detection = false;
 std::map<Window, Window> frames;
 std::map<Window, Window> titlebars;
-std::map<Window, wininfo> clients;
+std::map<Window, winInfo> clients;
 std::map<unsigned int, tile*> rootTiles;
 Display* display;
 Window root;
@@ -142,118 +142,6 @@ void createRootTile(int screen) {
 	rootTiles[index] = &rt;
 };
 
-void correctTiles(tile* tileToCorrect, bool recurse) {
-	// correct sizes
-	double totalSize = 0;
-	for (auto [index, child] : *tileToCorrect->tiles) {
-		totalSize += child->sizePortion;
-	};
-	for (auto [index, child] : *tileToCorrect->tiles) {
-		child->sizePortion /= totalSize;
-	};
-	
-	// do the same for all child tiles
-	if (recurse) {
-		for (auto [index, child] : *tileToCorrect->tiles) {
-			correctTiles(child, true);
-		};
-	};
-};
-
-void insertTile(tile* tileToSplit, Window windowToInsert, int index) {
-	if (tileToSplit->empty) {
-		tileToSplit->empty = false;
-		tileToSplit->content = &windowToInsert;
-		return;
-	};
-	
-	double sizePortion = 1 / tileToSplit->splits + 1;
-	tileToSplit->splits++;
-	
-	tile* newTile;
-	newTile->isRootTile = false;
-	newTile->splits = 0;
-	newTile->content = &windowToInsert;
-	
-	// snap to end of tile if index is greater than the size of the tile
-	int parentTileSize = 0;
-	while (tileToSplit->tiles->count(parentTileSize)) {
-		parentTileSize++;
-	};
-	if (index > parentTileSize) {
-		index = parentTileSize + 1;
-	};
-	
-	// offset every tile
-	for (int i = parentTileSize; i > index; i--) {
-		tileToSplit->tiles[i] = tileToSplit->tiles[i - 1];
-	};
-	
-	
-	
-	(*tileToSplit->tiles)[index] = newTile;
-};
-
-void removeTile(tile* targetTile, unsigned int index) {
-	
-};
-
-void renderTiles(tile* rootTile, int gapSize, unsigned int sizeX, unsigned int sizeY, unsigned int posX, unsigned int posY, bool horizontal) {
-	if (rootTile->empty) {
-		return;
-	};
-	
-	if (rootTile->splits == 0) {
-		XMoveWindow(
-			display,
-			*rootTile->content,
-			posX, posY
-		);
-		XResizeWindow(
-			display,
-			*rootTile->content,
-			sizeX, sizeY
-		);
-		return;
-	};
-	
-	int currentOffset = 0;
-    for (auto [index, newTile] : *rootTile->tiles) {
-        renderTiles(
-            newTile,
-            gapSize,
-            (sizeX * newTile->sizePortion) - (gapSize * rootTile->splits),
-            sizeY,
-            posX + currentOffset,
-            posY,
-            !horizontal
-        );
-        currentOffset += (sizeX * newTile->sizePortion) + gapSize;
-    };
-};
-
-void tileWindow(int tileMode, Window window) {
-	tile* tileToSplit;
-	unsigned int index;
-	
-	// select tile to insert new window into
-	switch(tileMode) {
-        case 1:
-			// add to the far right or at the bottom of the root tile
-			tileToSplit = rootTiles[0];
-			index = tileToSplit->splits + 1;
-			break;
-		default:
-			// add to the far right or at the bottom of the root tile
-			tileToSplit = rootTiles[0];
-			index = tileToSplit->splits + 1;
-			break;
-	};
-	
-	correctTiles(tileToSplit, true);
-	insertTile(tileToSplit, window, index);
-};
-
 void frame(Window window, bool was_created_before_wm) {
 	
 	// retrieve attributes of window to frame
@@ -324,7 +212,6 @@ void frame(Window window, bool was_created_before_wm) {
 	clients[window].gc = create_gc(display, bar, true);
 
 	// tile window
-	tileWindow(0, frame);
 	
 	// save frame
 	frames[window] = frame;
@@ -487,9 +374,6 @@ void onButtonRelease(const XButtonEvent& event) {
 	} else {
 		//printf("drag\n");
 	}
-
-	// tile window
-	tileWindow(0, event.window);
 	
 	dragging = false;
 	XDefineCursor(display, root, cursor_default);

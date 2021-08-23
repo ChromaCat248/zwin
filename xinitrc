@@ -1,3 +1,3 @@
-./zwin
+./target/debug/zwin
 
 exit

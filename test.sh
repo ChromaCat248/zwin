@@ -4,7 +4,7 @@
 # Opens a ZWin instance inside a Xephyr window
 
 echo compiling...
-make || exit
+cargo build || exit
 echo done compiling.
 
 # Uncomment if you get xkbcomp flooding and need time to look at compiler errors
