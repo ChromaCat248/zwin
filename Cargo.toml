@@ -5,4 +5,3 @@ edition = "2018"
 
 [dependencies]
 x11 = {version = "*", features = ["xlib", "xinerama"]}
-lazy_static = "1.4.0"

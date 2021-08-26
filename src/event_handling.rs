@@ -1,7 +1,11 @@
-// ZWin's X11 event handler
+// X11 event handler
+// Component of ZWin by ChromaCat248
 
 use x11;
 use x11::xlib::*;
+
+#[path = "../config.rs"] mod config;
+#[path = "./framing.rs"] mod framing;
 
 pub fn on_create_notify (event: XCreateWindowEvent) {
 	println!("ZWin: Recieved event #{} (created)", event.type_);
@@ -21,6 +25,7 @@ pub fn on_reparent_notify (event: XReparentEvent) {
 
 pub fn on_map_request (event: XMapRequestEvent) {
 	println!("ZWin: Recieved event #{} (map request)", event.type_);
+	framing::frame(event.window);
 }
 
 pub fn on_map_notify (event: XMapEvent) {
@@ -29,6 +34,7 @@ pub fn on_map_notify (event: XMapEvent) {
 
 pub fn on_unmap_notify (event: XUnmapEvent) {
 	println!("ZWin: Recieved event #{} (unmapped)", event.type_);
+	framing::unframe(event.window);
 }
 
 pub fn on_destroy_notify (event: XDestroyWindowEvent) {

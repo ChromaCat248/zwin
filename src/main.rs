@@ -4,13 +4,17 @@
 
 #![allow(non_upper_case_globals)]
 
-#[path = "../config.rs"] mod config;
+#[path = "../config.rs"] pub mod config;
+
+mod framing;
 mod event_handling;
 
 use x11;
 use x11::xlib::*;
 use std::mem::MaybeUninit;
 use core::ffi::c_void;
+
+
 
 static mut DISPLAY : *mut Display = 0 as *mut _XDisplay;
 static mut ROOTWIN : Window = 0 as Window;
@@ -38,7 +42,8 @@ fn main() {
 
 		XSelectInput(DISPLAY, ROOTWIN,
 						SubstructureRedirectMask |
-						SubstructureNotifyMask);
+						SubstructureNotifyMask
+		);
 
 		// set error handler
 		XSetErrorHandler(Some(on_x_error));
